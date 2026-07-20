@@ -1,0 +1,12 @@
+添加原仓库（upstream）：
+获取原仓库的更新（包括标签）
+git remote add upstream git@github.com:sparfenyuk/mcp-proxy.git
+git fetch upstream
+获取标签和更新：
+git fetch --tags upstream
+推送标签到你的 GitHub Fork：
+git push origin --tags
+合并原仓库的更改（如果需要）：
+git merge upstream/main
+基础推送（本地 main → 远程 main）
+git push origin main
