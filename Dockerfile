@@ -1,6 +1,11 @@
 # Build stage with explicit platform specification
 FROM ghcr.io/astral-sh/uv:python3.13-alpine AS uv
 
+# Use Aliyun mirrors for Python and Alpine package downloads
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com \
+    UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
+
 # Install the project into /app
 WORKDIR /app
 
@@ -22,10 +27,16 @@ COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories
 RUN apk add --update --no-cache catatonit
 
 # Final stage with explicit platform specification
 FROM python:3.13-alpine
+
+# Keep Python package downloads on the Aliyun mirror in the runtime image too
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com \
+    UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 COPY --from=uv /usr/bin/catatonit /usr/bin/
