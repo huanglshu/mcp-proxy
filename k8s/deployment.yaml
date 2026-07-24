@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-proxy
+  namespace: mcp-proxy
+  labels:
+    app: mcp-proxy
+    app.kubernetes.io/name: mcp-proxy
+spec:
+  # Multi-replica is supported. SSE clients need session affinity on the Service
+  # (see service.yaml) so /sse and /messages/ land on the same Pod.
+  # For Streamable HTTP, prefer --stateless for safer cross-pod balancing.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: mcp-proxy
+  template:
+    metadata:
+      labels:
+        app: mcp-proxy
+        app.kubernetes.io/name: mcp-proxy
+      annotations:
+        # Bump or change this after ConfigMap updates to force a rollout if desired
+        checksum/config: "servers-v1"
+    spec:
+      # Uncomment when using a private registry
+      # imagePullSecrets:
+      #   - name: harbor-pull-secret
+      containers:
+        - name: mcp-proxy
+          # Keep in sync with VERSION / build_image.sh output
+          image: harbor.gdalpha.com/alpha-ai-mcp/mcp-proxy:0.12.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - --named-server-config
+            - /config/servers.json
+            - --pass-environment
+            - --allow-origin
+            - "*"
+            - --log-level
+            - INFO
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Uncomment to inject secrets as env for child MCP processes
+          # (--pass-environment must remain enabled)
+          # envFrom:
+          #   - secretRef:
+          #       name: mcp-proxy-secrets
+          volumeMounts:
+            - name: servers-config
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: servers-config
+          configMap:
+            name: mcp-proxy-servers
+            items:
+              - key: servers.json
+                path: servers.json

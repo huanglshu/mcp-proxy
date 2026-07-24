@@ -33,6 +33,12 @@ RUN apk add --update --no-cache catatonit
 # Final stage with explicit platform specification
 FROM python:3.13-alpine
 
+# Use the Aliyun Alpine mirror and install the Node.js runtime.
+# Configure npm to use the Aliyun registry for package installs (npx/npm).
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
+    && apk add --no-cache nodejs npm \
+    && npm config set registry https://registry.npmmirror.com
+
 # Keep Python package downloads on the Aliyun mirror in the runtime image too
 ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PIP_TRUSTED_HOST=mirrors.aliyun.com \

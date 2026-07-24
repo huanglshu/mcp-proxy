@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-proxy
+  namespace: mcp-proxy
+  labels:
+    app: mcp-proxy
+    app.kubernetes.io/name: mcp-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-proxy
+  # Required for multi-replica SSE: keep a client on the same Pod so that
+  # /servers/<name>/sse and /servers/<name>/messages/ share process state.
+  # ClientIP affinity is L4; it does not survive client IP changes (NAT, proxies).
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

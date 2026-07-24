@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-proxy
+  namespace: mcp-proxy
+  labels:
+    app: mcp-proxy
+    app.kubernetes.io/name: mcp-proxy
+  annotations:
+    # Nginx Ingress Controller annotations for long-lived SSE connections
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Sticky sessions for multi-replica SSE (/sse + /messages/ on the same Pod)
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "mcp-proxy-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"
+
+    # Optional TLS / cert-manager
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mcp-proxy.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-proxy
+                port:
+                  number: 8080
+  # tls:
+  #   - hosts:
+  #       - mcp-proxy.example.com
+  #     secretName: mcp-proxy-tls

@@ -5,6 +5,8 @@ set -eu
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VERSION=`cat "$SCRIPT_DIR/VERSION"`
+
+echo "VERSION: $VERSION"
 IMAGE_NAME="harbor.gdalpha.com/alpha-ai-mcp/mcp-proxy:$VERSION"
 
 

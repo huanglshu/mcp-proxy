@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-proxy-servers
+  namespace: mcp-proxy
+  labels:
+    app: mcp-proxy
+    app.kubernetes.io/name: mcp-proxy
+data:
+  # Mounted as /config/servers.json
+  # Key names under mcpServers become URL path segments: /servers/<name>/
+  servers.json: |
+    {
+      "mcpServers": {
+        "fetch": {
+          "enabled": true,
+          "timeout": 60,
+          "command": "npx",
+          "args": [
+            "-y",
+            "@modelcontextprotocol/server-fetch"
+          ],
+          "transportType": "stdio"
+        }
+      }
+    }
