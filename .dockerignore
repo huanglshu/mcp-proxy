@@ -6,3 +6,5 @@
 !pyproject.toml
 !uv.lock
 !LICENSE
+!/bin/
+!/bin/loki-mcp-server
