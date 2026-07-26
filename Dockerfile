@@ -110,11 +110,17 @@ COPY --chmod=755 mcp/bin/loki-mcp-server /usr/local/bin/loki-mcp-server
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 COPY mcp/app/oracle-mcp-server /opt/oracle-mcp-server
 WORKDIR /opt/oracle-mcp-server
-# Use the project's lockfile (same approach as upstream oracle Dockerfile)
+# Project pins .python-version=3.12; without an override uv downloads managed
+# cpython-3.12 from python-build-standalone (NOT PyPI) — often very slow.
+# Base image already has system Python 3.13, and requires-python is ">=3.12".
+# Force system interpreter so build never fetches a remote CPython tarball.
+ENV UV_PYTHON_PREFERENCE=only-system \
+    UV_PYTHON=3.13
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev \
+    rm -f .python-version \
+    && uv sync --frozen --no-dev --python 3.13 \
     && mkdir -p /var/cache/oracle-mcp \
-    && .venv/bin/python -c "import oracledb; print('oracledb', oracledb.__version__)"
+    && .venv/bin/python -c "import sys, oracledb; print(sys.version); print('oracledb', oracledb.__version__)"
 
 # Runtime PATH: oracle venv + mcp-proxy venv
 ENV PATH="/opt/oracle-mcp-server/.venv/bin:/go/bin:/app/.venv/bin:/usr/local/bin:${PATH}" \
