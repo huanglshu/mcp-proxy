@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "oracle": {
+      "enabled": true,
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/opt/oracle-mcp-server",
+        "run",
+        "main.py"
+      ],
+      "env": {
+        "ORACLE_CONNECTION_STRING": "ECOLOGY/Auldey0731sskidc@10.10.11.134:1521/oauat",
+        "TARGET_SCHEMA": "ECOLOGY",
+        "READ_ONLY_MODE": "1"
+      },
+      "transportType": "stdio"
+    }
+  }
+}

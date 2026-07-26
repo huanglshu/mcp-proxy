@@ -52,20 +52,33 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          # Uncomment to inject secrets as env for child MCP processes
-          # (--pass-environment must remain enabled)
-          # envFrom:
-          #   - secretRef:
-          #       name: mcp-proxy-secrets
+          # Inject secrets as env for child MCP processes (oracle connection string, etc.)
+          # --pass-environment must remain enabled
+          envFrom:
+            - secretRef:
+                name: mcp-proxy-secrets
+                optional: true
+          env:
+            # Image defaults; servers.json can override per named server
+            - name: THICK_MODE
+              value: "1"
+            - name: ORACLE_CLIENT_LIB_DIR
+              value: /opt/oracle/instantclient_19_31
+            - name: CACHE_DIR
+              value: /var/cache/oracle-mcp
+            - name: LD_LIBRARY_PATH
+              value: /opt/oracle/instantclient_19_31
           volumeMounts:
             - name: servers-config
               mountPath: /config
               readOnly: true
+            - name: oracle-cache
+              mountPath: /var/cache/oracle-mcp
           readinessProbe:
             httpGet:
               path: /status
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -73,17 +86,17 @@ spec:
             httpGet:
               path: /status
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: "1"
+              cpu: 250m
               memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
       volumes:
         - name: servers-config
           configMap:
@@ -91,3 +104,6 @@ spec:
             items:
               - key: servers.json
                 path: servers.json
+        - name: oracle-cache
+          emptyDir:
+            sizeLimit: 2Gi

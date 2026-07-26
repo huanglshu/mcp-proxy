@@ -1,10 +1,30 @@
-# Exclude everything
+# Exclude everything by default
 *
 
-# Include required files only
+# mcp-proxy package
 !/src/
+!/src/**
 !pyproject.toml
 !uv.lock
 !LICENSE
-!/bin/
-!/bin/loki-mcp-server
+
+# Prebuilt MCP binaries + vendor MCP apps
+!/mcp/
+!/mcp/bin/
+!/mcp/bin/**
+!/mcp/app/
+!/mcp/app/oracle-mcp-server/
+!/mcp/app/oracle-mcp-server/**
+!/mcp/app/instantclient/
+!/mcp/app/instantclient/**
+
+# Drop heavy / secret / VCS noise from oracle tree (re-exclude after include)
+mcp/app/oracle-mcp-server/.git
+mcp/app/oracle-mcp-server/.venv
+mcp/app/oracle-mcp-server/**/__pycache__
+mcp/app/oracle-mcp-server/**/*.pyc
+mcp/app/oracle-mcp-server/.cache
+mcp/app/oracle-mcp-server/llms-full.txt
+mcp/app/oracle-mcp-server/test
+mcp/app/oracle-mcp-server/tests
+mcp/app/oracle-mcp-server/.env

@@ -147,6 +147,31 @@ Streamable HTTP：
 - SSE 需要较长连接，Ingress 超时建议调大（示例中已给出 Nginx 注解）
 - 若经 TLS 终止，客户端使用 `https://...`
 
+## Oracle MCP（Thick + Instant Client 19.31）
+
+镜像内已集成：
+
+- 源码：`mcp/app/oracle-mcp-server` → 容器 `/opt/oracle-mcp-server`
+- Instant Client Basic **19.31** → `/opt/oracle/instantclient_19_31`
+- 默认 `THICK_MODE=1`（可在 servers.json / 环境变量改为 thin）
+
+构建前可将 zip 放到 `mcp/app/instantclient/`（见该目录 README）；否则构建时尝试下载 19.31 Basic。
+
+ConfigMap 中 `oracle` 服务示例：
+
+```text
+command: uv --directory /opt/oracle-mcp-server run main.py
+URL:     /servers/oracle/sse  或  /servers/oracle/mcp
+```
+
+必填 Secret：`ORACLE_CONNECTION_STRING`（见 `secret.yaml.example`）。  
+schema 缓存目录：`/var/cache/oracle-mcp`（Deployment 已挂 emptyDir）。  
+大库首次缓存可能需数分钟，客户端 `timeoutMs` 建议 ≥ 300000。
+
+如何确认库是否可用 Thin / 版本是否兼容：见仓库外文档或对库执行  
+`SELECT banner FROM v$version` / `SELECT version_full FROM product_component_version`；  
+Thin 一般要求较新的库（12.1+ 量级，以 python-oracledb 当前文档为准）。Thick + Client 19.31 可覆盖常见 11gR2–19c/21c 连接场景（仍以 Oracle 兼容矩阵为准）。
+
 ## servers.json 配置
 
 ConfigMap 挂载为容器内 `/config/servers.json`，启动参数：

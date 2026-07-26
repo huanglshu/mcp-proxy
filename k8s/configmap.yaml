@@ -21,6 +21,35 @@ data:
             "@modelcontextprotocol/server-fetch"
           ],
           "transportType": "stdio"
+        },
+        "loki": {
+          "enabled": true,
+          "timeout": 60,
+          "command": "loki-mcp-server",
+          "args": [],
+          "transportType": "stdio"
+        },
+        "oracle": {
+          "enabled": true,
+          "timeout": 300,
+          "command": "uv",
+          "args": [
+            "--directory",
+            "/opt/oracle-mcp-server",
+            "run",
+            "main.py"
+          ],
+          "env": {
+            "CACHE_DIR": "/var/cache/oracle-mcp",
+            "THICK_MODE": "1",
+            "ORACLE_CLIENT_LIB_DIR": "/opt/oracle/instantclient_19_31",
+            "LD_LIBRARY_PATH": "/opt/oracle/instantclient_19_31",
+            "READ_ONLY_MODE": "1",
+            "TARGET_SCHEMA": "",
+            "PYTHONPATH": "/opt/oracle-mcp-server",
+            "PYTHONUNBUFFERED": "1"
+          },
+          "transportType": "stdio"
         }
       }
     }
