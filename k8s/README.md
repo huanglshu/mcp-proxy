@@ -82,13 +82,13 @@ kubectl apply -f namespace.yaml -f configmap.yaml -f deployment.yaml -f service.
 
 ```bash
 # Pod 状态
-kubectl -n mcp-proxy get pods -l app=mcp-proxy
+kubectl -n kube-ops get pods -l app=mcp-proxy
 
 # 日志（应打印 Serving MCP Servers via SSE）
-kubectl -n mcp-proxy logs -l app=mcp-proxy -f
+kubectl -n kube-ops logs -l app=mcp-proxy -f
 
 # 集群内探测
-kubectl -n mcp-proxy port-forward svc/mcp-proxy 8080:8080
+kubectl -n kube-ops port-forward svc/mcp-proxy 8080:8080
 curl -sS http://127.0.0.1:8080/status
 ```
 
@@ -106,13 +106,13 @@ curl -sS http://127.0.0.1:8080/status
 ### 集群内访问
 
 ```text
-http://mcp-proxy.mcp-proxy.svc.cluster.local:8080/servers/fetch/sse
+http://mcp-proxy.kube-ops.svc.cluster.local:8080/servers/fetch/sse
 ```
 
 ### 本地 port-forward
 
 ```bash
-kubectl -n mcp-proxy port-forward svc/mcp-proxy 8080:8080
+kubectl -n kube-ops port-forward svc/mcp-proxy 8080:8080
 ```
 
 客户端示例：
@@ -212,8 +212,8 @@ ConfigMap 挂载为容器内 `/config/servers.json`，启动参数：
 更新配置后：
 
 ```bash
-kubectl -n mcp-proxy apply -f configmap.yaml
-kubectl -n mcp-proxy rollout restart deploy/mcp-proxy
+kubectl -n kube-ops apply -f configmap.yaml
+kubectl -n kube-ops rollout restart deploy/mcp-proxy
 ```
 
 ## 镜像构建与推送
@@ -287,7 +287,7 @@ args:
 
 ```bash
 # 手动扩容
-kubectl -n mcp-proxy scale deploy/mcp-proxy --replicas=3
+kubectl -n kube-ops scale deploy/mcp-proxy --replicas=3
 
 # 或改 deployment.yaml 中的 replicas 后 apply
 ```
@@ -340,7 +340,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: mcp-proxy
-  namespace: mcp-proxy
+  namespace: kube-ops
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -385,7 +385,7 @@ spec:
 创建示例：
 
 ```bash
-kubectl -n mcp-proxy create secret docker-registry harbor-pull-secret \
+kubectl -n kube-ops create secret docker-registry harbor-pull-secret \
   --docker-server=harbor.gdalpha.com \
   --docker-username='<user>' \
   --docker-password='<password>'

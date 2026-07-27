@@ -23,7 +23,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
 # ---------------------------------------------------------------------------
-# Runtime: Debian bookworm + Node/Go + Instant Client 19.31 + oracle-mcp-server
+# Runtime: Debian bookworm + latest stable Node/npm/Go
+# + Instant Client 19.31 + oracle-mcp-server
 # Thick mode requires glibc Instant Client (not Alpine/musl).
 # ---------------------------------------------------------------------------
 FROM harbor.gdalpha.com/alpha-tools/python:3.13-bookworm
@@ -38,13 +39,55 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         unzip \
         libaio1 \
-        nodejs \
-        npm \
-        golang-go \
         git \
         tini \
-    && npm config set registry https://registry.npmmirror.com \
     && rm -rf /var/lib/apt/lists/*
+
+# ---- Node.js + npm: latest LTS (stable) binary, not Debian apt ----
+# Prefer npmmirror for CN builds; falls back to nodejs.org.
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "${ARCH}" in \
+        amd64) NODE_ARCH=x64 ;; \
+        arm64) NODE_ARCH=arm64 ;; \
+        *) echo "unsupported arch for Node.js: ${ARCH}" >&2; exit 1 ;; \
+    esac; \
+    NODE_INDEX_URL="https://npmmirror.com/mirrors/node/index.json"; \
+    if ! curl -fsI "${NODE_INDEX_URL}" >/dev/null 2>&1; then \
+        NODE_INDEX_URL="https://nodejs.org/dist/index.json"; \
+    fi; \
+    NODE_VERSION="$(curl -fsSL "${NODE_INDEX_URL}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(x["version"].lstrip("v") for x in d if x.get("lts")))')"; \
+    NODE_BASE="https://npmmirror.com/mirrors/node/v${NODE_VERSION}"; \
+    if ! curl -fsI "${NODE_BASE}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" >/dev/null 2>&1; then \
+        NODE_BASE="https://nodejs.org/dist/v${NODE_VERSION}"; \
+    fi; \
+    curl -fsSL "${NODE_BASE}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" \
+        | tar -xz -C /usr/local --strip-components=1; \
+    node -v; \
+    npm -v; \
+    npm config set registry https://registry.npmmirror.com; \
+    npm install -g @bilims/mcp-sqlserver @fhuang/mcp-mysql-server
+
+# ---- Go: latest stable from go.dev (CN-friendly download host) ----
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "${ARCH}" in \
+        amd64) GO_ARCH=amd64 ;; \
+        arm64) GO_ARCH=arm64 ;; \
+        *) echo "unsupported arch for Go: ${ARCH}" >&2; exit 1 ;; \
+    esac; \
+    GO_VERSION="$(curl -fsSL https://golang.google.cn/VERSION?m=text | head -n1)"; \
+    if [ -z "${GO_VERSION}" ] || [ "${GO_VERSION#go}" = "${GO_VERSION}" ]; then \
+        GO_VERSION="$(curl -fsSL https://go.dev/VERSION?m=text | head -n1)"; \
+    fi; \
+    curl -fsSL "https://golang.google.cn/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz" \
+        -o /tmp/go.tgz \
+    || curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz" \
+        -o /tmp/go.tgz; \
+    rm -rf /usr/local/go; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm -f /tmp/go.tgz; \
+    /usr/local/go/bin/go version
 
 # Python / Go env (aligned with previous image behaviour)
 ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
@@ -54,6 +97,8 @@ ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     GOSUMDB=sum.golang.google.cn \
     GO111MODULE=on \
     GOPATH=/go \
+    GOROOT=/usr/local/go \
+    PATH="/usr/local/go/bin:${PATH}" \
     PYTHONUNBUFFERED=1
 
 # ---- Oracle Instant Client Basic 19.31 (linux x64) ----
@@ -105,6 +150,9 @@ COPY --from=uv /app/.venv /app/.venv
 # ---- Loki MCP binary ----
 COPY --chmod=755 mcp/bin/loki-mcp-server /usr/local/bin/loki-mcp-server
 
+# ---- K8S MCP binary ----
+COPY --chmod=755 mcp/bin/k8s-mcp-server /usr/local/bin/k8s-mcp-server
+
 # ---- oracle-mcp-server (UV local install, no Docker-in-Docker) ----
 # Reuse uv binary from the build stage (same Harbor base), avoid extra ghcr pull
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
@@ -122,8 +170,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && mkdir -p /var/cache/oracle-mcp \
     && .venv/bin/python -c "import sys, oracledb; print(sys.version); print('oracledb', oracledb.__version__)"
 
-# Runtime PATH: oracle venv + mcp-proxy venv
-ENV PATH="/opt/oracle-mcp-server/.venv/bin:/go/bin:/app/.venv/bin:/usr/local/bin:${PATH}" \
+# Runtime PATH: oracle venv + Go + mcp-proxy venv
+ENV PATH="/opt/oracle-mcp-server/.venv/bin:/usr/local/go/bin:/go/bin:/app/.venv/bin:/usr/local/bin:${PATH}" \
     ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_31 \
     PYTHONPATH=/opt/oracle-mcp-server
 
