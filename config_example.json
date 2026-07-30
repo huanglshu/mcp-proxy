@@ -1,23 +1,16 @@
 {
   "mcpServers": {
-    "fetch": {
-      "enabled": true,
-      "timeout": 60,
-      "command": "uvx",
+    "context7": {
       "args": [
-        "mcp-server-fetch"
+        "@upstash/context7-mcp@1.0.31"
       ],
-      "transportType": "stdio"
-    },
-    "github": {
-      "enabled": false,
-      "timeout": 60,
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "transportType": "stdio"
+      "env": {
+        "CONTEXT7_API_KEY": "ctx7sk-0578d541-6e8b-4dd7-b0ca-d6b5acd5cff7"
+      },
+      "gallery": "https://api.mcp.github.com",
+      "type": "stdio",
+      "version": "1.0.31"
     }
   }
 }
