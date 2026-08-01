@@ -66,7 +66,7 @@ RUN set -eux; \
     node -v; \
     npm -v; \
     npm config set registry https://registry.npmmirror.com; \
-    npm install -g @bilims/mcp-sqlserver @fhuang/mcp-mysql-server @fangjunjie/ssh-mcp-server
+    npm install -g @bilims/mcp-sqlserver @fhuang/mcp-mysql-server @fangjunjie/ssh-mcp-server kubernetes-mcp-server
 
 # ---- Go: latest stable from go.dev (CN-friendly download host) ----
 RUN set -eux; \
@@ -151,7 +151,7 @@ COPY --from=uv /app/.venv /app/.venv
 COPY --chmod=755 mcp/bin/loki-mcp-server /usr/local/bin/loki-mcp-server
 
 # ---- K8S MCP binary ----
-COPY --chmod=755 mcp/bin/k8s-mcp-server /usr/local/bin/k8s-mcp-server
+COPY --chmod=755 mcp/bin/kubectl /usr/local/bin/kubectl
 
 # ---- oracle-mcp-server (UV local install, no Docker-in-Docker) ----
 # Reuse uv binary from the build stage (same Harbor base), avoid extra ghcr pull
