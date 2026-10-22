@@ -16,10 +16,14 @@ import sys
 import typing as t
 from importlib.metadata import version
 
+import pymysql
 from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
-from .config_loader import load_named_server_configs_from_file
+from .config_loader import (
+    load_named_server_configs_from_file,
+    load_named_server_configs_from_mysql,
+)
 from .mcp_server import DEFAULT_EXPOSE_HEADERS, MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
@@ -223,6 +227,18 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "and any --named-server CLI arguments will be ignored."
         ),
     )
+    stdio_client_options.add_argument(
+        "--named-server-mysql-config",
+        type=str,
+        default=None,
+        metavar="FILE_PATH",
+        help=(
+            "Path to a JSON file containing MySQL connection settings for named stdio "
+            "servers. The configured SQL must return name, config, status, and version "
+            "columns. Only rows with status=1 are loaded. If provided, any "
+            "--named-server CLI arguments will be ignored."
+        ),
+    )
 
     mcp_server_group = parser.add_argument_group("SSE server options")
     mcp_server_group.add_argument(
@@ -389,6 +405,36 @@ def _load_named_servers_from_config(
         sys.exit(1)
 
 
+def _load_named_servers_from_mysql_config(
+    config_path: str,
+    base_env: dict[str, str],
+    logger: logging.Logger,
+) -> dict[str, StdioServerParameters]:
+    """Load named server configurations from a MySQL query."""
+    logger.info("Starting named server configuration loading from MySQL: %s", config_path)
+    try:
+        named_servers = load_named_server_configs_from_mysql(config_path, base_env)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, pymysql.MySQLError):
+        logger.exception(
+            "Failed to load server configurations from MySQL config %s. Exiting.",
+            config_path,
+        )
+        sys.exit(1)
+    except Exception:
+        logger.exception(
+            "An unexpected error occurred while loading MySQL server configurations "
+            "from %s. Exiting.",
+            config_path,
+        )
+        sys.exit(1)
+    logger.info(
+        "Completed named server configuration loading from MySQL: config=%s loaded=%d",
+        config_path,
+        len(named_servers),
+    )
+    return named_servers
+
+
 def _configure_named_servers_from_cli(
     named_server_definitions: list[tuple[str, str]],
     base_env: dict[str, str],
@@ -429,6 +475,64 @@ def _configure_named_servers_from_cli(
     return named_stdio_params
 
 
+def _configure_named_servers(
+    args_parsed: argparse.Namespace,
+    base_env: dict[str, str],
+    logger: logging.Logger,
+) -> dict[str, StdioServerParameters]:
+    """Configure named servers from the selected configuration source."""
+    if args_parsed.named_server_config and args_parsed.named_server_mysql_config:
+        logger.error(
+            "--named-server-config and --named-server-mysql-config cannot be used together.",
+        )
+        sys.exit(1)
+
+    if args_parsed.named_server_mysql_config:
+        logger.info(
+            "Selecting MySQL as the named server configuration source: %s",
+            args_parsed.named_server_mysql_config,
+        )
+        if args_parsed.named_server_definitions:
+            logger.warning(
+                "--named-server CLI arguments are ignored when "
+                "--named-server-mysql-config is provided.",
+            )
+        return _load_named_servers_from_mysql_config(
+            args_parsed.named_server_mysql_config,
+            base_env,
+            logger,
+        )
+
+    if args_parsed.named_server_config:
+        logger.info(
+            "Selecting JSON file as the named server configuration source: %s",
+            args_parsed.named_server_config,
+        )
+        if args_parsed.named_server_definitions:
+            logger.warning(
+                "--named-server CLI arguments are ignored when --named-server-config is provided.",
+            )
+        return _load_named_servers_from_config(
+            args_parsed.named_server_config,
+            base_env,
+            logger,
+        )
+
+    if args_parsed.named_server_definitions:
+        logger.info(
+            "Selecting CLI arguments as the named server configuration source: count=%d",
+            len(args_parsed.named_server_definitions),
+        )
+        return _configure_named_servers_from_cli(
+            args_parsed.named_server_definitions,
+            base_env,
+            logger,
+        )
+
+    logger.debug("No named server configuration source selected.")
+    return {}
+
+
 def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
     """Create MCP server settings from parsed arguments."""
     expose_headers = (
@@ -457,11 +561,13 @@ def main() -> None:
         not args_parsed.command_or_url
         and not args_parsed.named_server_definitions
         and not args_parsed.named_server_config
+        and not args_parsed.named_server_mysql_config
     ):
         parser.print_help()
         logger.error(
             "Either a command_or_url for a default server or at least one --named-server "
-            "(or --named-server-config) must be provided for stdio mode.",
+            "(or --named-server-config/--named-server-mysql-config) must be provided "
+            "for stdio mode.",
         )
         sys.exit(1)
 
@@ -484,24 +590,12 @@ def main() -> None:
     # Configure default server
     default_stdio_params = _configure_default_server(args_parsed, base_env, logger)
 
-    # Configure named servers
-    named_stdio_params: dict[str, StdioServerParameters] = {}
-    if args_parsed.named_server_config:
-        if args_parsed.named_server_definitions:
-            logger.warning(
-                "--named-server CLI arguments are ignored when --named-server-config is provided.",
-            )
-        named_stdio_params = _load_named_servers_from_config(
-            args_parsed.named_server_config,
-            base_env,
-            logger,
-        )
-    elif args_parsed.named_server_definitions:
-        named_stdio_params = _configure_named_servers_from_cli(
-            args_parsed.named_server_definitions,
-            base_env,
-            logger,
-        )
+    named_stdio_params = _configure_named_servers(args_parsed, base_env, logger)
+    logger.info(
+        "Named server configuration completed: default_configured=%s named_loaded=%d",
+        default_stdio_params is not None,
+        len(named_stdio_params),
+    )
 
     # Ensure at least one server is configured
     if not default_stdio_params and not named_stdio_params:

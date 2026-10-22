@@ -49,6 +49,13 @@
       "request": "launch",
       "command": "bash \"${workspaceFolder}/start_local.sh\"",
       "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Start mcp-proxy (start_local_db_config.sh)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "bash \"${workspaceFolder}/start_local_db_config.sh\"",
+      "cwd": "${workspaceFolder}"
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "host":"172.30.60.139",
+  "port": 8001,
+  "username": "root",
+  "password": "aofei123",
+  "database": "alpha-notify-webhook-dev",
+  "sql": "SELECT mcp_code as name, config_json as config, status, version FROM t_mcp_config"
+}

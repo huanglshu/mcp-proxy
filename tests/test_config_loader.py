@@ -11,7 +11,10 @@ from unittest.mock import Mock, patch
 import pytest
 from mcp.client.stdio import StdioServerParameters
 
-from mcp_proxy.config_loader import load_named_server_configs_from_file
+from mcp_proxy.config_loader import (
+    load_named_server_configs_from_file,
+    load_named_server_configs_from_mysql,
+)
 
 
 @pytest.fixture
@@ -137,12 +140,12 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
     base_env = {"EXAMPLE_ENV": "true"}
     loaded_params = load_named_server_configs_from_file(example_config_path, base_env)
 
-    assert "fetch" in loaded_params
-    fetch_param = loaded_params["fetch"]
-    assert isinstance(fetch_param, StdioServerParameters)
-    assert fetch_param.command == "uvx"
-    assert fetch_param.args == ["mcp-server-fetch"]
-    assert fetch_param.env == base_env
+    assert "context7" in loaded_params
+    context7_param = loaded_params["context7"]
+    assert isinstance(context7_param, StdioServerParameters)
+    assert context7_param.command == "npx"
+    assert context7_param.args == ["@upstash/context7-mcp@1.0.31"]
+    assert context7_param.env["EXAMPLE_ENV"] == "true"
     # The 'timeout' and 'transportType' fields from the config are currently ignored by the loader,
     # so no need to assert them on StdioServerParameters.
 
@@ -247,3 +250,224 @@ def test_config_file_is_empty_string() -> None:
         path = Path(tmp_config_path)
         if path.exists():
             path.unlink()
+
+
+@pytest.fixture
+def mysql_config_file() -> Generator[str, None, None]:
+    """Creates a temporary MySQL connection config file."""
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        delete=False,
+        suffix=".json",
+        encoding="utf-8",
+    ) as f:
+        json.dump(
+            {
+                "host": "mysql.example.com",
+                "port": 3306,
+                "username": "reader",
+                "password": "secret",
+                "database": "mcp",
+                "sql": (
+                    "SELECT mcp_code AS name, config_json AS config, status, version "
+                    "FROM t_mcp_config"
+                ),
+            },
+            f,
+        )
+        path = f.name
+
+    yield path
+
+    config_path = Path(path)
+    if config_path.exists():
+        config_path.unlink()
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_load_named_servers_from_mysql(
+    mock_connect: Mock,
+    mysql_config_file: str,
+) -> None:
+    """Load enabled server rows from MySQL and ignore disabled rows."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "enabled_server",
+            "config": json.dumps(
+                {
+                    "command": "uvx",
+                    "args": ["mcp-server-fetch"],
+                    "env": {"FOO": "bar"},
+                },
+            ),
+            "status": 1,
+            "version": "2026.10.22",
+        },
+        {
+            "name": "disabled_server",
+            "config": {"command": "disabled-command"},
+            "status": 0,
+            "version": "1",
+        },
+    ]
+    mock_connection = mock_connect.return_value
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
+
+    loaded_params = load_named_server_configs_from_mysql(
+        mysql_config_file,
+        {"PASSED": "env_value"},
+    )
+
+    assert set(loaded_params) == {"enabled_server"}
+    enabled_server = loaded_params["enabled_server"]
+    assert enabled_server.command == "uvx"
+    assert enabled_server.args == ["mcp-server-fetch"]
+    assert enabled_server.env == {"PASSED": "env_value", "FOO": "bar"}
+    mock_connection.close.assert_called_once_with()
+    mock_cursor.execute.assert_called_once()
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_load_named_servers_from_mysql_accepts_mcp_servers_wrapper(
+    mock_connect: Mock,
+    mysql_config_file: str,
+) -> None:
+    """Accept a full mcpServers wrapper in the config column."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "context7",
+            "config": {
+                "mcpServers": {
+                    "context7": {
+                        "command": "npx",
+                        "args": ["-y", "@upstash/context7-mcp@1.0.31"],
+                    },
+                },
+            },
+            "status": "1",
+            "version": 3,
+        },
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    loaded_params = load_named_server_configs_from_mysql(mysql_config_file, {})
+
+    assert list(loaded_params) == ["context7"]
+    assert loaded_params["context7"].command == "npx"
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_load_named_servers_from_mysql_logs_key_nodes_without_secrets(
+    mock_connect: Mock,
+    mysql_config_file: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Log key MySQL loading stages without exposing the password or config value."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "logged_server",
+            "config": {"command": "top-secret-command"},
+            "status": 1,
+            "version": 7,
+        },
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with caplog.at_level("DEBUG", logger="mcp_proxy.config_loader"):
+        load_named_server_configs_from_mysql(mysql_config_file, {})
+
+    log_messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Reading MySQL named server configuration file" in message
+        for message in log_messages
+    )
+    assert any("MySQL connection settings loaded" in message for message in log_messages)
+    assert any(
+        "Connecting to MySQL named server configuration source" in message
+        for message in log_messages
+    )
+    assert any(
+        "Executing MySQL named server configuration query" in message
+        for message in log_messages
+    )
+    assert any("returned 1 row(s)" in message for message in log_messages)
+    assert any(
+        "Loaded named server 'logged_server' from MySQL" in message
+        for message in log_messages
+    )
+    assert any("MySQL named server configuration summary" in message for message in log_messages)
+    assert "secret" not in caplog.text
+    assert "top-secret-command" not in caplog.text
+
+
+@patch("mcp_proxy.config_loader.logger")
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_load_named_servers_from_mysql_skips_invalid_and_duplicate_rows(
+    mock_connect: Mock,
+    mock_logger: Mock,
+    mysql_config_file: str,
+) -> None:
+    """Skip invalid config rows and duplicate names from MySQL."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "duplicate",
+            "config": {"command": "first-command"},
+            "status": 1,
+            "version": 1,
+        },
+        {
+            "name": "duplicate",
+            "config": {"command": "second-command"},
+            "status": 1,
+            "version": 2,
+        },
+        {
+            "name": "invalid_json",
+            "config": "not json",
+            "status": 1,
+            "version": 1,
+        },
+        {
+            "name": "",
+            "config": {"command": "ignored-command"},
+            "status": 1,
+            "version": 1,
+        },
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    loaded_params = load_named_server_configs_from_mysql(mysql_config_file, {})
+
+    assert list(loaded_params) == ["duplicate"]
+    assert loaded_params["duplicate"].command == "first-command"
+    assert mock_logger.warning.call_count == 3  # noqa: PLR2004
+    mock_logger.info.assert_any_call(
+        "MySQL named server configuration summary: target=%s rows=%d loaded=%d "
+        "disabled=%d duplicates=%d invalid=%d",
+        "reader@mysql.example.com:3306/mcp",
+        4,
+        1,
+        0,
+        1,
+        2,
+    )
+
+
+def test_load_named_servers_from_mysql_invalid_connection_config(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Reject MySQL connection config files missing required fields."""
+    tmp_config_path = create_temp_config_file(
+        {
+            "host": "mysql.example.com",
+            "username": "reader",
+            "sql": "SELECT 1",
+        },
+    )
+
+    with pytest.raises(ValueError, match="missing required fields: database"):
+        load_named_server_configs_from_mysql(tmp_config_path, {})

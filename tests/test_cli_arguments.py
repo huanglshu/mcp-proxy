@@ -67,6 +67,19 @@ def test_expose_header_multiple(parser: ArgumentParser) -> None:
     assert args.expose_headers == ["Header-One", "Header-Two"]
 
 
+def test_named_server_mysql_config_argument(parser: ArgumentParser) -> None:
+    """--named-server-mysql-config stores the MySQL connection file path."""
+    args = parser.parse_args(
+        [
+            "--named-server-mysql-config",
+            "db_config_example.json",
+            "--port",
+            "8080",
+        ],
+    )
+    assert args.named_server_mysql_config == "db_config_example.json"
+
+
 def test_create_mcp_settings_default_expose_headers(parser: ArgumentParser) -> None:
     """_create_mcp_settings uses default expose headers when not provided."""
     args = parser.parse_args(["uvx", "mcp-server-fetch", "--port", "8080"])

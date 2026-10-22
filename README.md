@@ -131,6 +131,7 @@ Arguments
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                        | --no-stateless                              |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                                 | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                             | --named-server-config /path/to/servers.json |
+| `--named-server-mysql-config FILE_PATH` | No                      | Path to a JSON file with MySQL settings. The query must return name, config, status, version. | --named-server-mysql-config /path/to/db_config.json |
 | `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                              | 8080                                        |
 | `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                        | 0.0.0.0                                     |
 
@@ -170,12 +171,55 @@ mcp-proxy --port=8080 --allow-origin='*' --expose-header Custom-Header uvx mcp-s
 - `NAME` is used in the URL path `/servers/NAME/`.
 - `COMMAND_STRING` is the command to start the server (e.g., 'uvx mcp-server-fetch').
   - Can be used multiple times.
-  - This argument is ignored if `--named-server-config` is used.
+  - This argument is ignored if `--named-server-config` or `--named-server-mysql-config` is used.
 - `FILE_PATH` - If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored.
 
 If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
 
-Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
+Named servers (whether defined by `--named-server`, `--named-server-config`, or `--named-server-mysql-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
+
+**MySQL Configuration File Format for `--named-server-mysql-config`:**
+
+The referenced file contains only MySQL connection settings:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "username": "mcp_reader",
+  "password": "your-password",
+  "database": "mcp",
+  "sql": "SELECT mcp_code AS name, config_json AS config, status, version FROM t_mcp_config"
+}
+```
+
+The SQL result must contain four columns:
+
+- `name`: unique MCP server name; it is used in `/servers/<name>/`.
+- `config`: a JSON string or JSON object containing `command`, `args`, and optional `env`.
+  A full `mcpServers` wrapper is also accepted for compatibility.
+- `status`: only the value `1` enables the server; every other value disables it.
+- `version`: configuration version, retained for logging and traceability.
+
+Example `config` value:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@upstash/context7-mcp@1.0.31"],
+  "env": {
+    "CONTEXT7_API_KEY": "your-api-key"
+  }
+}
+```
+
+Start the proxy with:
+
+```bash
+mcp-proxy --port=8080 --named-server-mysql-config ./db_config_example.json
+```
+
+`--named-server-config` and `--named-server-mysql-config` are mutually exclusive.
 The `/status` endpoint provides global status.
 
 **JSON Configuration File Format for `--named-server-config`:**
