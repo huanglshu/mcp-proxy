@@ -21,10 +21,16 @@ from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import (
+    MySQLNamedServerSnapshot,
+    load_named_server_config_snapshot_from_mysql,
     load_named_server_configs_from_file,
-    load_named_server_configs_from_mysql,
 )
-from .mcp_server import DEFAULT_EXPOSE_HEADERS, MCPServerSettings, run_mcp_server
+from .mcp_server import (
+    DEFAULT_EXPOSE_HEADERS,
+    MCPServerSettings,
+    MySQLNamedServerRuntime,
+    run_mcp_server,
+)
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
 
@@ -409,30 +415,32 @@ def _load_named_servers_from_mysql_config(
     config_path: str,
     base_env: dict[str, str],
     logger: logging.Logger,
-) -> dict[str, StdioServerParameters]:
+) -> MySQLNamedServerSnapshot:
     """Load named server configurations from a MySQL query."""
     logger.info("Starting named server configuration loading from MySQL: %s", config_path)
     try:
-        named_servers = load_named_server_configs_from_mysql(config_path, base_env)
-    except (FileNotFoundError, json.JSONDecodeError, ValueError, pymysql.MySQLError):
-        logger.exception(
-            "Failed to load server configurations from MySQL config %s. Exiting.",
+        snapshot = load_named_server_config_snapshot_from_mysql(config_path, base_env)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, pymysql.MySQLError) as error:
+        logger.error(  # noqa: TRY400
+            "Failed to load server configurations from MySQL config %s (%s). Exiting.",
             config_path,
+            type(error).__name__,
         )
         sys.exit(1)
-    except Exception:
-        logger.exception(
+    except Exception as error:  # noqa: BLE001
+        logger.error(  # noqa: TRY400
             "An unexpected error occurred while loading MySQL server configurations "
-            "from %s. Exiting.",
+            "from %s (%s). Exiting.",
             config_path,
+            type(error).__name__,
         )
         sys.exit(1)
     logger.info(
         "Completed named server configuration loading from MySQL: config=%s loaded=%d",
         config_path,
-        len(named_servers),
+        len(snapshot.enabled_servers),
     )
-    return named_servers
+    return snapshot
 
 
 def _configure_named_servers_from_cli(
@@ -479,7 +487,7 @@ def _configure_named_servers(
     args_parsed: argparse.Namespace,
     base_env: dict[str, str],
     logger: logging.Logger,
-) -> dict[str, StdioServerParameters]:
+) -> tuple[dict[str, StdioServerParameters], MySQLNamedServerSnapshot | None]:
     """Configure named servers from the selected configuration source."""
     if args_parsed.named_server_config and args_parsed.named_server_mysql_config:
         logger.error(
@@ -497,11 +505,12 @@ def _configure_named_servers(
                 "--named-server CLI arguments are ignored when "
                 "--named-server-mysql-config is provided.",
             )
-        return _load_named_servers_from_mysql_config(
+        snapshot = _load_named_servers_from_mysql_config(
             args_parsed.named_server_mysql_config,
             base_env,
             logger,
         )
+        return snapshot.enabled_servers, snapshot
 
     if args_parsed.named_server_config:
         logger.info(
@@ -512,10 +521,13 @@ def _configure_named_servers(
             logger.warning(
                 "--named-server CLI arguments are ignored when --named-server-config is provided.",
             )
-        return _load_named_servers_from_config(
-            args_parsed.named_server_config,
-            base_env,
-            logger,
+        return (
+            _load_named_servers_from_config(
+                args_parsed.named_server_config,
+                base_env,
+                logger,
+            ),
+            None,
         )
 
     if args_parsed.named_server_definitions:
@@ -523,14 +535,17 @@ def _configure_named_servers(
             "Selecting CLI arguments as the named server configuration source: count=%d",
             len(args_parsed.named_server_definitions),
         )
-        return _configure_named_servers_from_cli(
-            args_parsed.named_server_definitions,
-            base_env,
-            logger,
+        return (
+            _configure_named_servers_from_cli(
+                args_parsed.named_server_definitions,
+                base_env,
+                logger,
+            ),
+            None,
         )
 
     logger.debug("No named server configuration source selected.")
-    return {}
+    return {}, None
 
 
 def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
@@ -590,7 +605,11 @@ def main() -> None:
     # Configure default server
     default_stdio_params = _configure_default_server(args_parsed, base_env, logger)
 
-    named_stdio_params = _configure_named_servers(args_parsed, base_env, logger)
+    named_stdio_params, mysql_config_snapshot = _configure_named_servers(
+        args_parsed,
+        base_env,
+        logger,
+    )
     logger.info(
         "Named server configuration completed: default_configured=%s named_loaded=%d",
         default_stdio_params is not None,
@@ -598,7 +617,11 @@ def main() -> None:
     )
 
     # Ensure at least one server is configured
-    if not default_stdio_params and not named_stdio_params:
+    if (
+        not default_stdio_params
+        and not named_stdio_params
+        and not args_parsed.named_server_mysql_config
+    ):
         parser.print_help()
         logger.error(
             "No stdio servers configured. Provide a default command or use --named-server.",
@@ -607,11 +630,22 @@ def main() -> None:
 
     # Create MCP server settings and run the server
     mcp_settings = _create_mcp_settings(args_parsed)
+    mysql_runtime = (
+        MySQLNamedServerRuntime(
+            config_file_path=args_parsed.named_server_mysql_config,
+            base_env=base_env,
+            snapshot=mysql_config_snapshot,
+        )
+        if args_parsed.named_server_mysql_config is not None
+        and mysql_config_snapshot is not None
+        else None
+    )
     asyncio.run(
         run_mcp_server(
             default_server_params=default_stdio_params,
             named_server_params=named_stdio_params,
             mcp_settings=mcp_settings,
+            mysql_config=mysql_runtime,
         ),
     )
 

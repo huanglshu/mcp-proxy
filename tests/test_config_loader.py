@@ -12,9 +12,13 @@ import pytest
 from mcp.client.stdio import StdioServerParameters
 
 from mcp_proxy.config_loader import (
+    DEFAULT_MYSQL_CONFIG_POLL_INTERVAL,
+    load_named_server_config_snapshot_from_mysql,
     load_named_server_configs_from_file,
     load_named_server_configs_from_mysql,
 )
+
+CONFIGURED_MYSQL_POLL_INTERVAL = 7.5
 
 
 @pytest.fixture
@@ -403,6 +407,35 @@ def test_load_named_servers_from_mysql_logs_key_nodes_without_secrets(
     assert "top-secret-command" not in caplog.text
 
 
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_snapshot_can_disable_periodic_detail_logs(
+    mock_connect: Mock,
+    mysql_config_file: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Quiet snapshot loads must not log connection targets or unchanged rows."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "quiet_server",
+            "config": {"command": "server-command", "args": ["--safe"]},
+            "status": 1,
+            "version": 1,
+        },
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with caplog.at_level("DEBUG", logger="mcp_proxy.config_loader"):
+        snapshot = load_named_server_config_snapshot_from_mysql(
+            mysql_config_file,
+            {},
+            log_details=False,
+        )
+
+    assert list(snapshot.enabled_servers) == ["quiet_server"]
+    assert caplog.text == ""
+
+
 @patch("mcp_proxy.config_loader.logger")
 @patch("mcp_proxy.config_loader.pymysql.connect")
 def test_load_named_servers_from_mysql_skips_invalid_and_duplicate_rows(
@@ -455,6 +488,153 @@ def test_load_named_servers_from_mysql_skips_invalid_and_duplicate_rows(
         1,
         2,
     )
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_snapshot_preserves_disabled_versions_and_invalid_names(
+    mock_connect: Mock,
+    mysql_config_file: str,
+) -> None:
+    """Retain row state needed to safely reconcile the live server registry."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {
+            "name": "enabled-int",
+            "config": {"command": "enabled-int"},
+            "status": 1,
+            "version": 4,
+        },
+        {
+            "name": "enabled-string",
+            "config": {"command": "enabled-string"},
+            "status": "1",
+            "version": 5,
+        },
+        {
+            "name": "disabled-bool",
+            "config": None,
+            "status": True,
+            "version": "bool",
+        },
+        {
+            "name": "disabled-float",
+            "config": None,
+            "status": 1.0,
+            "version": "float",
+        },
+        {
+            "name": "invalid-config",
+            "config": "not json",
+            "status": 1,
+            "version": "invalid",
+        },
+        {
+            "name": "duplicate",
+            "config": {"command": "first"},
+            "status": 1,
+            "version": "first",
+        },
+        {
+            "name": "duplicate",
+            "config": {"command": "second"},
+            "status": 1,
+            "version": "second",
+        },
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    snapshot = load_named_server_config_snapshot_from_mysql(mysql_config_file, {})
+
+    assert set(snapshot.enabled_servers) == {
+        "enabled-int",
+        "enabled-string",
+        "duplicate",
+    }
+    assert snapshot.servers["enabled-int"].version == "4"
+    assert snapshot.servers["enabled-string"].version == "5"
+    assert snapshot.servers["disabled-bool"].enabled is False
+    assert snapshot.servers["disabled-bool"].version == "bool"
+    assert snapshot.servers["disabled-float"].enabled is False
+    assert snapshot.invalid_names == frozenset({"invalid-config", "duplicate"})
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_snapshot_rejects_rows_missing_required_columns(
+    mock_connect: Mock,
+    mysql_config_file: str,
+) -> None:
+    """A malformed SQL result fails the whole poll instead of looking empty."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = [
+        {"name": "incomplete", "config": {"command": "ignored"}, "status": 1},
+    ]
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with pytest.raises(ValueError, match="missing required columns: version"):
+        load_named_server_config_snapshot_from_mysql(mysql_config_file, {})
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_snapshot_uses_default_poll_interval(
+    mock_connect: Mock,
+    mysql_config_file: str,
+) -> None:
+    """Use the documented 30-second default when no interval is configured."""
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = []
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    snapshot = load_named_server_config_snapshot_from_mysql(mysql_config_file, {})
+
+    assert snapshot.poll_interval == DEFAULT_MYSQL_CONFIG_POLL_INTERVAL
+
+
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_snapshot_reads_configured_poll_interval(
+    mock_connect: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Read the polling interval from the MySQL connection JSON."""
+    config_path = create_temp_config_file(
+        {
+            "host": "mysql.example.com",
+            "username": "reader",
+            "database": "mcp",
+            "sql": "SELECT name, config, status, version FROM mcp_servers",
+            "poll_interval": CONFIGURED_MYSQL_POLL_INTERVAL,
+        },
+    )
+    mock_cursor = Mock()
+    mock_cursor.fetchall.return_value = []
+    mock_connect.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+    snapshot = load_named_server_config_snapshot_from_mysql(config_path, {})
+
+    assert snapshot.poll_interval == CONFIGURED_MYSQL_POLL_INTERVAL
+
+
+@pytest.mark.parametrize("poll_interval", [0, -1, True, "30"])
+@patch("mcp_proxy.config_loader.pymysql.connect")
+def test_mysql_config_rejects_invalid_poll_interval(
+    mock_connect: Mock,
+    poll_interval: object,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Reject invalid intervals before attempting a database connection."""
+    config_path = create_temp_config_file(
+        {
+            "host": "mysql.example.com",
+            "username": "reader",
+            "database": "mcp",
+            "sql": "SELECT name, config, status, version FROM mcp_servers",
+            "poll_interval": poll_interval,
+        },
+    )
+
+    with pytest.raises(ValueError, match="poll_interval"):
+        load_named_server_config_snapshot_from_mysql(config_path, {})
+
+    mock_connect.assert_not_called()
 
 
 def test_load_named_servers_from_mysql_invalid_connection_config(

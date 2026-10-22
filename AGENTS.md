@@ -10,8 +10,9 @@ development can continue consistently on another computer.
 - CLI entry point: `--named-server-mysql-config FILE_PATH`.
 - The referenced JSON file contains MySQL connection settings, not MCP server
   definitions: `host`, `port`, `username`, `password`, `database`, `sql`, and
-  optional `connect_timeout`. The default port is `3306` and the default timeout
-  is `10` seconds.
+  optional `connect_timeout` and `poll_interval`. The default port is `3306`,
+  the default connection timeout is `10` seconds, and the default polling
+  interval is `30` seconds.
 - The SQL result must return four columns: `name`, `config`, `status`,
   `version`.
 - `name` is unique. It becomes the URL path segment `/servers/<name>/`.
@@ -113,8 +114,9 @@ does not surface all child-process stderr output in the outer traceback.
 
 - CLI 参数：`--named-server-mysql-config FILE_PATH`。
 - 配置文件保存的是 MySQL 连接信息，不是 MCP server 定义：`host`、`port`、
-  `username`、`password`、`database`、`sql`，可选 `connect_timeout`。默认端口为
-  `3306`，默认连接超时为 `10` 秒。
+  `username`、`password`、`database`、`sql`，可选 `connect_timeout` 和
+  `poll_interval`。默认端口为 `3306`，默认连接超时为 `10` 秒，默认轮询间隔为
+  `30` 秒。
 - SQL 查询结果必须包含四列：`name`、`config`、`status`、`version`。
 - `name` 是唯一标识，同时作为访问路径 `/servers/<name>/`。
 - `status` 只有值为 `1` 或字符串 `"1"` 时才启用，其他值均视为禁用。

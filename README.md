@@ -189,16 +189,20 @@ The referenced file contains only MySQL connection settings:
   "username": "mcp_reader",
   "password": "your-password",
   "database": "mcp",
+  "poll_interval": 30,
   "sql": "SELECT mcp_code AS name, config_json AS config, status, version FROM t_mcp_config"
 }
 ```
+
+`poll_interval` is the polling interval in seconds. It must be a positive number
+and defaults to `30`.
 
 The SQL result must contain four columns:
 
 - `name`: unique MCP server name; it is used in `/servers/<name>/`.
 - `config`: a JSON string or JSON object containing `command`, `args`, and optional `env`.
   A full `mcpServers` wrapper is also accepted for compatibility.
-- `status`: only the value `1` enables the server; every other value disables it.
+- `status`: only integer `1` or string `"1"` enables the server; every other value disables it.
 - `version`: configuration version, retained for logging and traceability.
 
 Example `config` value:
@@ -221,6 +225,14 @@ mcp-proxy --port=8080 --named-server-mysql-config ./db_config_example.json
 
 `--named-server-config` and `--named-server-mysql-config` are mutually exclusive.
 The `/status` endpoint provides global status.
+
+In MySQL configuration mode, the proxy polls immediately after startup and then
+uses the configured `poll_interval`. A disabled or deleted row removes its route
+and stops its child process. A changed `version` starts and initializes a
+replacement before switching traffic; if initialization fails, the existing
+server remains active. New enabled rows are added after successful
+initialization. A failed query or an invalid row with a known name does not
+remove its current server.
 
 **JSON Configuration File Format for `--named-server-config`:**
 
