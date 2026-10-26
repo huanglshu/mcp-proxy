@@ -66,7 +66,11 @@ RUN set -eux; \
     node -v; \
     npm -v; \
     npm config set registry https://registry.npmmirror.com; \
-    npm install -g @bilims/mcp-sqlserver @fhuang/mcp-mysql-server @fangjunjie/ssh-mcp-server kubernetes-mcp-server
+    npm install -g @bilims/mcp-sqlserver \
+                   @fhuang/mcp-mysql-server \
+                   @fangjunjie/ssh-mcp-server \
+                   kubernetes-mcp-server \
+                   @easy-mcps/mysql-mcp-server
 
 # ---- Go: latest stable from go.dev (CN-friendly download host) ----
 RUN set -eux; \

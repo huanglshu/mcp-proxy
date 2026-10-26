@@ -1,12 +1,15 @@
 """Tests for reconciling running named servers with MySQL snapshots."""
 
+import asyncio
 import contextlib
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from mcp.client.stdio import StdioServerParameters
 from starlette.applications import Starlette
-from starlette.routing import Mount, Route
+from starlette.routing import BaseRoute, Mount, Route
 from starlette.testclient import TestClient
 
 from mcp_proxy.config_loader import MySQLNamedServerConfig, MySQLNamedServerSnapshot
@@ -14,6 +17,7 @@ from mcp_proxy.mcp_server import (
     _global_status,
     _handle_status,
     _ManagedNamedServer,
+    _NamedServerInitFailure,
     _NamedServerRegistry,
 )
 from mcp_proxy.mysql_config_watcher import MySQLNamedServerConfigWatcher
@@ -479,3 +483,69 @@ async def test_status_route_survives_reconcile_runtime_error() -> None:
         assert client.get("/status").status_code == 200
         assert await watcher.poll_once() is False
         assert client.get("/status").status_code == 200
+
+
+async def test_cross_task_reconcile_closes_anyio_task_group_cleanly() -> None:
+    """Reconciling from a watcher task must not exit AnyIO cancel scopes across tasks."""
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def fake_initialize_named_server(
+        params: StdioServerParameters,
+        *,
+        stateless_instance: bool,  # noqa: ARG001
+        failure_state: _NamedServerInitFailure,  # noqa: ARG001
+    ) -> AsyncIterator[list[BaseRoute]]:
+        async with anyio.create_task_group():
+            events.append(f"enter:{params.command}")
+            try:
+                yield []
+            finally:
+                events.append(f"exit:{params.command}")
+
+    registry = _NamedServerRegistry(
+        [],
+        stateless_instance=True,
+        base_url="http://127.0.0.1:8080",
+    )
+    params_v1 = StdioServerParameters(command="v1", args=[], env={})
+    params_v2 = StdioServerParameters(command="v2", args=[], env={})
+
+    with patch(
+        "mcp_proxy.mcp_server._initialize_named_server",
+        side_effect=fake_initialize_named_server,
+    ):
+        assert await registry.add("alpha", params_v1, version="1") is True
+
+        update_task = asyncio.create_task(
+            registry.reconcile(
+                MySQLNamedServerSnapshot(
+                    servers={
+                        "alpha": MySQLNamedServerConfig(
+                            enabled=True,
+                            version="2",
+                            params=params_v2,
+                        ),
+                    },
+                ),
+            ),
+        )
+        await update_task
+
+        disable_task = asyncio.create_task(
+            registry.reconcile(
+                MySQLNamedServerSnapshot(
+                    servers={
+                        "alpha": MySQLNamedServerConfig(
+                            enabled=False,
+                            version="2",
+                            params=None,
+                        ),
+                    },
+                ),
+            ),
+        )
+        await disable_task
+
+    assert events == ["enter:v1", "enter:v2", "exit:v1", "exit:v2"]
+    assert "alpha" not in registry._servers

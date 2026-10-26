@@ -428,7 +428,23 @@ class _ManagedNamedServer:
     params: StdioServerParameters
     version: str | None
     route: Mount
-    stack: contextlib.AsyncExitStack
+    stack: contextlib.AsyncExitStack = field(default_factory=contextlib.AsyncExitStack)
+    _stop_event: asyncio.Event | None = field(default=None, repr=False)
+    _lifecycle_task: asyncio.Task[None] | None = field(default=None, repr=False)
+
+    async def aclose(self) -> None:
+        """Close server resources within the task that entered their contexts."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._lifecycle_task is not None:
+            try:
+                await self._lifecycle_task
+            except asyncio.CancelledError:
+                self._lifecycle_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._lifecycle_task
+                raise
+        await self.stack.aclose()
 
 
 async def _prepare_named_server(
@@ -440,21 +456,48 @@ async def _prepare_named_server(
     failure_status: str = "failed",
 ) -> _ManagedNamedServer | None:
     """Start and initialize a named server without publishing its route."""
-    server_stack = contextlib.AsyncExitStack()
     failure_state = _NamedServerInitFailure()
-    try:
-        routes = await server_stack.enter_async_context(
-            _initialize_named_server(
-                params,
-                stateless_instance=stateless_instance,
-                failure_state=failure_state,
-            ),
-        )
-    except BaseException as error:
-        if _should_propagate_server_error(error):
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    ready_future: asyncio.Future[list[BaseRoute]] = loop.create_future()
+
+    async def _lifecycle_runner() -> None:
+        server_stack = contextlib.AsyncExitStack()
+        try:
+            routes = await server_stack.enter_async_context(
+                _initialize_named_server(
+                    params,
+                    stateless_instance=stateless_instance,
+                    failure_state=failure_state,
+                ),
+            )
+        except BaseException as error:  # noqa: BLE001
             await server_stack.aclose()
+            if not ready_future.done():
+                ready_future.set_exception(error)
+            return
+
+        if not ready_future.done():
+            ready_future.set_result(routes)
+        try:
+            await stop_event.wait()
+        finally:
+            await server_stack.aclose()
+
+    lifecycle_task = asyncio.create_task(
+        _lifecycle_runner(),
+        name=f"mcp-named-server-{name}",
+    )
+    try:
+        routes = await ready_future
+    except BaseException as error:
+        stop_event.set()
+        if not lifecycle_task.done():
+            lifecycle_task.cancel()
+        with contextlib.suppress(BaseException):
+            await lifecycle_task
+        if _should_propagate_server_error(error):
             raise
-        await server_stack.aclose()
         _record_named_server_failure(
             name,
             error,
@@ -468,7 +511,8 @@ async def _prepare_named_server(
         params=params,
         version=version,
         route=Mount(f"/servers/{name}", routes=routes),
-        stack=server_stack,
+        _stop_event=stop_event,
+        _lifecycle_task=lifecycle_task,
     )
 
 
@@ -538,7 +582,7 @@ class _NamedServerRegistry:
             with contextlib.suppress(ValueError):
                 self._routes.remove(server.route)
             logger.info("Removed named server '%s'.", name)
-            await server.stack.aclose()
+            await server.aclose()
 
     async def _restart(
         self,
@@ -572,7 +616,7 @@ class _NamedServerRegistry:
             self._routes[route_index] = candidate.route
         self._servers[name] = candidate
         _global_status["server_instances"][name] = "configured"
-        await current.stack.aclose()
+        await current.aclose()
         logger.info("Updated named server '%s'.", name)
 
     def _skip_unchanged_version(self, name: str, version: str | None) -> bool:

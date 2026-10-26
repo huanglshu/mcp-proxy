@@ -4,6 +4,6 @@
   "username": "root",
   "password": "aofei123",
   "database": "alpha-notify-webhook-dev",
-  "poll_interval": 30,
+  "poll_interval": 15,
   "sql": "SELECT mcp_code as name, config_json as config, status, version FROM t_mcp_config"
 }
